@@ -4,7 +4,12 @@ on:
   schedule:
     # every Monday at 09:00 UTC
     - cron: '0 9 * * 1'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run the sync even if no new upstream release was found'
+        type: boolean
+        default: false
 
 env:
   OBS_PROJECT: home:pancakse
@@ -34,7 +39,10 @@ jobs:
       - name: Compare versions
         id: check
         run: |
-          if [ "${{ steps.upstream.outputs.version }}" == "${{ steps.current.outputs.version }}" ]; then
+          if [ "${{ github.event.inputs.force }}" == "true" ]; then
+            echo "Force run requested, skipping version comparison."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.upstream.outputs.version }}" == "${{ steps.current.outputs.version }}" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -82,7 +90,7 @@ jobs:
           git config user.name "helium-sync-bot"
           git config user.email "actions@syrupstudios.dev"
           git add helium-browser-bin.spec
-          git commit -m "helium: bump to ${{ steps.upstream.outputs.version }}"
+          git diff --cached --quiet || git commit -m "helium: bump to ${{ steps.upstream.outputs.version }}"
           git push
 
       - name: Install osc
