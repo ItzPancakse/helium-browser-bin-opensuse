@@ -7,7 +7,7 @@ Release:        1%{?dist}
 Summary:        Private, fast, and honest web browser (prebuilt binary)
 License:        GPL-3.0 AND BSD-3-Clause
 URL:            https://github.com/imputnet/helium-linux
-Source0:        https://github.com/imputnet/helium-linux/releases/download/%{pkgver}/helium-%{pkgver}-x86_64_linux.tar.xz
+Source0:        https://github.com/imputnet/helium-linux/releases/download/0.15.5.1/helium-0.15.5.1-x86_64_linux.tar.xz
 Source1:        helium-browser.desktop
 Source2:        helium-browser-wrapper
 
