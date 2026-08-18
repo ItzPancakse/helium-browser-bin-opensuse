@@ -1,0 +1,119 @@
+name: Sync Helium to OBS
+
+on:
+  schedule:
+    # every Monday at 09:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+env:
+  OBS_PROJECT: home:pancakse
+  OBS_PACKAGE: helium-browser-bin
+  UPSTREAM_REPO: imputnet/helium-linux
+  HELIUM_GPG_FPR: BE677C1989D35EAB2C5F26C9351601AD01D6378E
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Get latest upstream release
+        id: upstream
+        run: |
+          latest=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" | jq -r '.tag_name')
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Get current packaged version
+        id: current
+        run: |
+          current=$(grep -oP '(?<=%global pkgver ).*' helium-browser-bin.spec)
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Compare versions
+        id: check
+        run: |
+          if [ "${{ steps.upstream.outputs.version }}" == "${{ steps.current.outputs.version }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cancel run if no update available
+        if: steps.check.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Upstream is still at ${{ steps.current.outputs.version }}, nothing to do."
+          gh run cancel "${GITHUB_RUN_ID}"
+          # give the cancellation a moment to land before this job would
+          # otherwise fall through to the remaining (skipped) steps
+          sleep 30
+
+      - name: Download tarball + signature
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          v="${{ steps.upstream.outputs.version }}"
+          base="https://github.com/${UPSTREAM_REPO}/releases/download/${v}"
+          curl -fsSLo "helium-${v}-x86_64_linux.tar.xz" "${base}/helium-${v}-x86_64_linux.tar.xz"
+          curl -fsSLo "helium-${v}-x86_64_linux.tar.xz.asc" "${base}/helium-${v}-x86_64_linux.tar.xz.asc"
+
+      - name: Verify GPG signature
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/imputnet/helium-linux/main/pubkey.asc -o helium_pub.asc
+          gpg --show-key --with-colons helium_pub.asc | grep -q "${HELIUM_GPG_FPR}"
+          gpg --import helium_pub.asc
+          gpg --trusted-key "${HELIUM_GPG_FPR: -16}" \
+              --verify "helium-${{ steps.upstream.outputs.version }}-x86_64_linux.tar.xz.asc" \
+                       "helium-${{ steps.upstream.outputs.version }}-x86_64_linux.tar.xz"
+
+      - name: Bump spec version
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          v="${{ steps.upstream.outputs.version }}"
+          sed -i "s/^%global pkgver .*/%global pkgver ${v}/" helium-browser-bin.spec
+          sed -i "0,/^Source0:.*/s//Source0:        https:\/\/github.com\/${UPSTREAM_REPO}\/releases\/download\/${v}\/helium-${v}-x86_64_linux.tar.xz/" helium-browser-bin.spec
+
+      - name: Commit spec bump back to repo
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "helium-sync-bot"
+          git config user.email "actions@syrupstudios.dev"
+          git add helium-browser-bin.spec
+          git commit -m "helium: bump to ${{ steps.upstream.outputs.version }}"
+          git push
+
+      - name: Install osc
+        if: steps.check.outputs.changed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y osc
+
+      - name: Configure osc credentials
+        if: steps.check.outputs.changed == 'true'
+        env:
+          OBS_USERNAME: ${{ secrets.OBS_USERNAME }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+        run: |
+          mkdir -p ~/.config/osc
+          cat > ~/.config/osc/oscrc <<EOF
+          [general]
+          apiurl = https://api.opensuse.org
+
+          [https://api.opensuse.org]
+          user = ${OBS_USERNAME}
+          pass = ${OBS_PASSWORD}
+          EOF
+          chmod 600 ~/.config/osc/oscrc
+
+      - name: Push package to OBS
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          v="${{ steps.upstream.outputs.version }}"
+          osc checkout "${OBS_PROJECT}/${OBS_PACKAGE}" -o obs-checkout
+          cp helium-browser-bin.spec helium-browser.desktop helium-browser-wrapper obs-checkout/
+          cp "helium-${v}-x86_64_linux.tar.xz" obs-checkout/
+          cd obs-checkout
+          osc addremove
+          osc commit -m "Update to ${v}"
+          

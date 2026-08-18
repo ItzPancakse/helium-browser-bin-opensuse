@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Helium
+Comment=Private, fast, and honest web browser
+Exec=helium-browser %U
+Terminal=false
+Type=Application
+Icon=helium-browser
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=helium
